@@ -17,7 +17,7 @@ local AnimalsShared = require(ReplicatedStorage:WaitForChild("Shared"):WaitForCh
 
 -- CONFIG
 local SCAN_INTERVAL = 0.1 -- 100ms
-local WEBHOOK_COOLDOWN = 2 -- 2 seconds
+local WEBHOOK_COOLDOWN = 1 -- 1 second minimum cooldown
 local TOP_LIMIT = 8
 local WEBHOOK_THRESHOLD = 10000000 -- 10M Minimum
 local EVERYONE_THRESHOLD = 50000000 -- 50M for @everyone
@@ -30,6 +30,8 @@ local LAST_WEBHOOK_SENT = 0
 local LAST_EVERYONE_TAG = 0
 local EVERYONE_COOLDOWN = 300 -- 5 minutes
 local LP = Players.LocalPlayer
+local lastSentPets = {} -- Track was schon gesendet wurde
+local fastScanCount = 0
 
 -- PET IMAGES
 local PET_IMAGES = {
@@ -54,168 +56,64 @@ local function formatMoneyShort(v)
 end
 
 -- ==============================================================
--- FAST SCANNER
+-- SOFORTIGER WEBHOOK FÜR EINZELNE PETS
 -- ==============================================================
-local function fastScan()
-    local tempAnimals = {}
-    local plots = workspace:FindFirstChild("Plots")
-    
-    if not plots then 
-        allAnimalsCache = {}
-        currentTopBrainrots = {}
-        return 
-    end
-    
-    for _, plot in ipairs(plots:GetChildren()) do
-        local success, channel = pcall(function()
-            return Synchronizer:Get(plot.Name)
-        end)
-        
-        if success and channel then
-            local animalList = channel:Get("AnimalList")
-            if animalList then
-                for slot, animalData in pairs(animalList) do
-                    if type(animalData) == "table" then
-                        local animalName = animalData.Index
-                        local animalInfo = AnimalsData[animalName]
-                        if animalInfo then
-                            local genValue = AnimalsShared:GetGeneration(animalName, animalData.Mutation, animalData.Traits, nil)
-                            
-                            -- NUR ÜBER 10M FILTERN
-                            if genValue >= WEBHOOK_THRESHOLD then
-                                local displayName = animalInfo.DisplayName or animalName
-                                
-                                table.insert(tempAnimals, {
-                                    name = displayName,
-                                    genValue = genValue,
-                                    isHighValue = genValue >= EVERYONE_THRESHOLD
-                                })
-                            end
-                        end
-                    end
-                end
-            end
-        end
-    end
-    
-    -- Sort and update
-    table.sort(tempAnimals, function(a, b)
-        return a.genValue > b.genValue
-    end)
-    
-    allAnimalsCache = tempAnimals
-    
-    -- Update top 8
-    currentTopBrainrots = {}
-    for i = 1, math.min(#allAnimalsCache, TOP_LIMIT) do
-        currentTopBrainrots[i] = {
-            name = allAnimalsCache[i].name,
-            mps = allAnimalsCache[i].genValue,
-            isHighValue = allAnimalsCache[i].isHighValue
-        }
-    end
-end
-
--- ==============================================================
--- FAST WEBHOOK - ALLE 10M+ MIT @EVERYONE NUR FÜR 50M+
--- ==============================================================
-local function sendFastWebhook()
+local function sendInstantWebhook(petName, petValue, isHighValue)
     local currentTime = tick()
     
-    -- Cooldown check
     if currentTime - LAST_WEBHOOK_SENT < WEBHOOK_COOLDOWN then
-        return false
-    end
-    
-    if #currentTopBrainrots == 0 then
-        return false
+        return
     end
     
     LAST_WEBHOOK_SENT = currentTime
     
-    -- Check for @everyone (NUR 50M+)
-    local shouldTagEveryone = false
-    local highValueCount = 0
-    
-    for _, brainrot in ipairs(currentTopBrainrots) do
-        if brainrot.mps >= EVERYONE_THRESHOLD then
-            shouldTagEveryone = true
-            highValueCount = highValueCount + 1
-        end
-    end
-    
-    -- @everyone cooldown
+    -- Check @everyone cooldown
+    local shouldTagEveryone = isHighValue
     if shouldTagEveryone and currentTime - LAST_EVERYONE_TAG < EVERYONE_COOLDOWN then
         shouldTagEveryone = false
     elseif shouldTagEveryone then
         LAST_EVERYONE_TAG = currentTime
     end
     
-    -- Build ranking text
-    local rankingText = ""
-    local emojiRanks = {"🥇", "🥈", "🥉", "4️⃣", "5️⃣", "6️⃣", "7️⃣", "8️⃣"}
-    
-    for i, brainrot in ipairs(currentTopBrainrots) do
-        if i > TOP_LIMIT then break end
-        
-        local rankEmoji = emojiRanks[i] or string.format("%d.", i)
-        local mpsText = formatMoneyShort(brainrot.mps)
-        local fireEmoji = brainrot.mps >= EVERYONE_THRESHOLD and "🔥 " or ""
-        
-        rankingText = rankingText .. string.format("%s **%s**\n", rankEmoji, brainrot.name)
-        rankingText = rankingText .. string.format("   └ %s`%s/s`\n\n", fireEmoji, mpsText)
-    end
-    
-    -- Build embed
+    -- Build single pet embed
     local realJobId = game.JobId
-    local embedColor = 0xFF9900 -- Standard orange
-    
-    if highValueCount > 0 then
-        embedColor = 0xFF5500 -- Orange-Rot für 50M+
-    end
-    
-    if highValueCount >= 2 then
-        embedColor = 0xFF0000 -- Rot für mehrere 50M+
-    end
+    local embedColor = isHighValue and 0xFF0000 or 0xFF9900
     
     local embed = {
         {
-            title = "🧠 BRAINROT ALERT • TOP 8",
+            title = "🚨 NEUER BRAINROT GEFUNDEN!",
             color = embedColor,
-            description = string.format("**%d** brainrots found • **%s/s** top value%s",
-                #allAnimalsCache,
-                formatMoneyShort(currentTopBrainrots[1] and currentTopBrainrots[1].mps or 0),
-                highValueCount > 0 and string.format(" • **%d** over 50M+", highValueCount) or ""
-            ),
+            description = string.format("**%s** wurde entdeckt!", petName),
             fields = {
                 { 
-                    name = "🏆 TOP RANKING", 
-                    value = rankingText, 
-                    inline = false 
-                },
-                { 
-                    name = "📊 STATISTICS", 
-                    value = string.format("🎯 **Threshold:** 10M/s\n⚡ **Refresh:** 100ms\n🔥 **50M+ Count:** %d", highValueCount), 
+                    name = "💰 WERT", 
+                    value = string.format("`%s/s`", formatMoneyShort(petValue)), 
                     inline = true 
                 },
                 { 
-                    name = "💰 TOTAL VALUE", 
-                    value = string.format("**%s/s**\n%d pets over 10M/s",
-                        formatMoneyShort(currentTopBrainrots[1] and currentTopBrainrots[1].mps or 0),
-                        #currentTopBrainrots), 
+                    name = "🏷️ KATEGORIE", 
+                    value = isHighValue and "🔥 **50M+ MEGA BRAINROT**" or "⚠️ **10M+ BRAINROT**", 
                     inline = true 
                 },
                 { 
-                    name = "🆔 JOB ID", 
+                    name = "🎮 JOB ID", 
                     value = string.format("```%s```", realJobId), 
                     inline = false 
+                },
+                { 
+                    name = "⏰ ZEIT", 
+                    value = os.date("%H:%M:%S"), 
+                    inline = true 
                 }
             },
             footer = { 
-                text = string.format("v6.1 • %s", os.date("%H:%M:%S")) 
+                text = "Brainrot Notify v6.1 • SOFORTIGE BENACHRICHTIGUNG"
             },
             thumbnail = { 
-                url = PET_IMAGES[currentTopBrainrots[1] and currentTopBrainrots[1].name] or PET_IMAGES["default"] 
+                url = PET_IMAGES[petName] or PET_IMAGES["default"] 
+            },
+            image = { 
+                url = isHighValue and "https://media.discordapp.net/attachments/1308897786296668302/1451243116586086561/BrainRot.png" or PET_IMAGES["default"]
             }
         }
     }
@@ -223,7 +121,7 @@ local function sendFastWebhook()
     -- @everyonly NUR bei 50M+ Pets
     local contentText = nil
     if shouldTagEveryone then
-        contentText = string.format("@everyone **%d BRAINROTS OVER 50M+!** 🔥", highValueCount)
+        contentText = string.format("@everyone **50M+ MEGA BRAINROT GEFUNDEN!** 🚨")
     end
     
     local data = { 
@@ -235,7 +133,7 @@ local function sendFastWebhook()
     
     local jsonData = HttpService:JSONEncode(data)
     
-    -- Send webhook ASYNC
+    -- Send webhook SOFORT
     task.spawn(function()
         pcall(function()
             if syn and syn.request then
@@ -263,15 +161,110 @@ local function sendFastWebhook()
         end)
     end)
     
-    print("✅ Webhook sent with " .. #currentTopBrainrots .. " brainrots")
-    if highValueCount > 0 then
-        print("🔥 " .. highValueCount .. " brainrots over 50M+")
-        if shouldTagEveryone then
-            print("🔔 @everyone tagged!")
+    print(string.format("🚨 SOFORT WEBHOOK: %s - %s/s", petName, formatMoneyShort(petValue)))
+    if isHighValue then
+        print("🔥 50M+ MEGA BRAINROT!")
+    end
+end
+
+-- ==============================================================
+-- CLEANUP ALTE PETS
+-- ==============================================================
+local function cleanupOldPets()
+    local currentTime = tick()
+    local maxAge = 300 -- 5 Minuten
+    
+    for petKey in pairs(lastSentPets) do
+        -- Hier könntest du timestamps hinzufügen wenn nötig
+        -- Für einfache Implementierung: alle 5 Minuten clearen
+        lastSentPets = {}
+        break
+    end
+end
+
+-- ==============================================================
+-- FAST SCANNER MIT SOFORTIGEM WEBHOOK
+-- ==============================================================
+local function fastScan()
+    local tempAnimals = {}
+    local currentTime = tick()
+    local plots = workspace:FindFirstChild("Plots")
+    
+    if not plots then 
+        allAnimalsCache = {}
+        currentTopBrainrots = {}
+        return 
+    end
+    
+    -- Finde ALLE 10M+ Pets
+    for _, plot in ipairs(plots:GetChildren()) do
+        local success, channel = pcall(function()
+            return Synchronizer:Get(plot.Name)
+        end)
+        
+        if success and channel then
+            local animalList = channel:Get("AnimalList")
+            if animalList then
+                for slot, animalData in pairs(animalList) do
+                    if type(animalData) == "table" then
+                        local animalName = animalData.Index
+                        local animalInfo = AnimalsData[animalName]
+                        if animalInfo then
+                            local genValue = AnimalsShared:GetGeneration(animalName, animalData.Mutation, animalData.Traits, nil)
+                            
+                            if genValue >= WEBHOOK_THRESHOLD then
+                                local displayName = animalInfo.DisplayName or animalName
+                                local petKey = displayName .. "_" .. tostring(genValue)
+                                
+                                -- Prüfe ob dieser Pet neu ist
+                                local isNewPet = not lastSentPets[petKey]
+                                
+                                table.insert(tempAnimals, {
+                                    name = displayName,
+                                    genValue = genValue,
+                                    isHighValue = genValue >= EVERYONE_THRESHOLD,
+                                    isNew = isNewPet
+                                })
+                                
+                                -- SOFORT WEBHOOK für NEUE PETS
+                                if isNewPet and currentTime - LAST_WEBHOOK_SENT >= WEBHOOK_COOLDOWN then
+                                    lastSentPets[petKey] = true
+                                    
+                                    -- Sofortigen Webhook senden
+                                    task.spawn(function()
+                                        sendInstantWebhook(displayName, genValue, genValue >= EVERYONE_THRESHOLD)
+                                    end)
+                                end
+                            end
+                        end
+                    end
+                end
+            end
         end
     end
     
-    return true
+    -- Update caches
+    table.sort(tempAnimals, function(a, b)
+        return a.genValue > b.genValue
+    end)
+    
+    allAnimalsCache = tempAnimals
+    
+    -- Update top 8 für UI
+    currentTopBrainrots = {}
+    for i = 1, math.min(#allAnimalsCache, TOP_LIMIT) do
+        currentTopBrainrots[i] = {
+            name = allAnimalsCache[i].name,
+            mps = allAnimalsCache[i].genValue,
+            isHighValue = allAnimalsCache[i].isHighValue
+        }
+    end
+    
+    fastScanCount = fastScanCount + 1
+    if fastScanCount >= 10 then -- Alle 10 Scans cleanup
+        cleanupOldPets()
+        fastScanCount = 0
+    end
 end
 
 -- ==============================================================
@@ -394,7 +387,7 @@ local function updateUI()
             end
             
             statsLabel.Text = string.format("%d brainrots • %d over 50M+", 
-                #currentTopBrainrots, highValueCount)
+                #allAnimalsCache, highValueCount)
                 
             if highValueCount > 0 then
                 statsLabel.TextColor3 = Color3.fromRGB(255, 150, 50)
@@ -414,7 +407,7 @@ local function updateUI()
         local cooldownLeft = math.max(0, LAST_WEBHOOK_SENT + WEBHOOK_COOLDOWN - currentTime)
         
         if cooldownLeft > 0 then
-            webhookLabel.Text = string.format("⏳ Cooldown: %ds", math.ceil(cooldownLeft))
+            webhookLabel.Text = string.format("⏱ Cooldown: %ds", math.ceil(cooldownLeft))
             webhookLabel.TextColor3 = Color3.fromRGB(255, 150, 50)
         else
             webhookLabel.Text = "🔔 Webhook: READY"
@@ -436,25 +429,24 @@ task.spawn(function()
     end
 end)
 
--- Auto webhook loop (every 30 seconds) - SCHICKT ALLE 10M+
-task.spawn(function()
-    while true do
-        if #currentTopBrainrots > 0 then
-            sendFastWebhook()
-        end
-        task.wait(30) -- Every 30 seconds
-    end
-end)
-
 -- ==============================================================
 -- KEYBINDS
 -- ==============================================================
 UIS.InputBegan:Connect(function(io, gp)
     if gp then return end
     
-    -- F1: Manual webhook
+    -- F1: Send webhook for all current brainrots
     if io.KeyCode == Enum.KeyCode.F1 then
-        sendFastWebhook()
+        for _, pet in ipairs(allAnimalsCache) do
+            local petKey = pet.name .. "_" .. tostring(pet.genValue)
+            if not lastSentPets[petKey] then
+                task.spawn(function()
+                    sendInstantWebhook(pet.name, pet.genValue, pet.isHighValue)
+                end)
+                lastSentPets[petKey] = true
+                task.wait(0.1) -- Small delay between sends
+            end
+        end
         
     -- F2: Debug info
     elseif io.KeyCode == Enum.KeyCode.F2 then
@@ -474,6 +466,7 @@ UIS.InputBegan:Connect(function(io, gp)
             local tag = brainrot.mps >= EVERYONE_THRESHOLD and "🔥" or "  "
             print(string.format("%d. %s %s - %s/s", i, tag, brainrot.name, formatMoneyShort(brainrot.mps)))
         end
+        print("Total sent pets: " .. #lastSentPets)
         print("==================")
     end
 end)
@@ -482,37 +475,26 @@ end)
 -- INITIALIZATION
 -- ==============================================================
 print([[
-╔══════════════════════════════════════════════════════════════╗
-║           BRAINROT NOTIFY v6.1 - ALL 10M+ WEBHOOKS         ║
-╠══════════════════════════════════════════════════════════════╣
-║  📊 SEND ALL 10M+ BRAINROTS                               ║
-║  🔥 @everyonly ONLY for 50M+ (5min cooldown)              ║
-║  🧠 TOP 8 SYSTEM - Shows all 10M+ pets                   ║
-║  🆔 Job ID at bottom                                      ║
-╠══════════════════════════════════════════════════════════════╣
-║  WEBHOOK RULES:                                           ║
-║  • 10M - 49M: Normal webhook (no @everyone)              ║
-║  • 50M+: Webhook WITH @everyone                          ║
-║  • All brainrots over 10M are sent                      ║
-╠══════════════════════════════════════════════════════════════╣
-║  CONTROLS:                                                ║
-║  F1 - Send webhook manually                              ║
-║  F2 - Print debug info                                   ║
-╠══════════════════════════════════════════════════════════════╣
-║  AUTO FEATURES:                                          ║
-║  • Scans every 100ms                                    ║
-║  • Auto webhook every 30s (all 10M+)                   ║
-║  • Real-time detection                                 ║
-╚══════════════════════════════════════════════════════════════╝
+┌──────────────────────────────────────────────────────────────┐
+│           BRAINROT NOTIFY v6.1 - SOFORTIGE WEBHOOKS          │
+├──────────────────────────────────────────────────────────────┤
+│  🚨 SOFORTIGE BENACHRICHTIGUNGEN BEI 10M+ PETS              │
+│  🔥 @everyonly ONLY for 50M+ (5min cooldown)                 │
+│  🧠 TOP 8 SYSTEM - Shows all 10M+ pets                       │
+│  🎮 Job ID at bottom                                          │
+├──────────────────────────────────────────────────────────────┤
+│  WEBHOOK RULES:                                              │
+│  • 10M - 49M: Sofortiger Webhook (no @everyone)              │
+│  • 50M+: Sofortiger Webhook MIT @everyone                    │
+│  • Jeder neue Pet wird sofort gesendet                       │
+├──────────────────────────────────────────────────────────────┤
+│  CONTROLS:                                                   │
+│  F1 - Send all unsent brainrots                             │
+│  F2 - Print debug info                                      │
+├──────────────────────────────────────────────────────────────┤
+│  AUTO FEATURES:                                              │
+│  • Scans every 100ms                                         │
+│  • Sofortiger Webhook bei neuem Pet                         │
+│  • 1 Sekunde Cooldown zwischen Webhooks                     │
+└──────────────────────────────────────────────────────────────┘
 ]])
-
-print("✅ Script loaded successfully!")
-print("🧠 Monitoring for ALL brainrots over 10M/s...")
-print("🔥 @everyone only for 50M+ brainrots")
-print("⚡ Speed: 100ms scan interval")
-print("🔔 Auto webhook every 30 seconds")
-
--- Initial scan
-task.wait(1)
-fastScan()
-updateUI()

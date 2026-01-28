@@ -115,15 +115,32 @@ local TS = game:GetService("TeleportService")
 local P = game:GetService("Players")
 local req = request or http_request or (http and http.request)
 
+local hopActive = false
+local hopTask = nil
+
 local function getSvrs()
-    local s, r = pcall(function() return game:HttpGet("https://games.roblox.com/v1/games/" .. game.PlaceId .. "/servers/Public?sortOrder=Asc&limit=100") end)
-    if s and r then local d = pcall(function() return HS:JSONDecode(r) end) if d then return HS:JSONDecode(r).data end end
+    local s, r = pcall(function() 
+        return game:HttpGet("https://games.roblox.com/v1/games/" .. game.PlaceId .. "/servers/Public?sortOrder=Asc&limit=100") 
+    end)
+    
+    if s and r then 
+        local d = pcall(function() 
+            return HS:JSONDecode(r) 
+        end) 
+        if d then 
+            return HS:JSONDecode(r).data 
+        end
+    end
     return {}
 end
 
 local function hop()
+    if hopActive then return end
+    
+    hopActive = true
+    
     task.spawn(function()
-        while true do
+        while hopActive do
             local svrs = getSvrs()
             if #svrs > 0 then
                 local valid = {}
@@ -133,21 +150,29 @@ local function hop()
                     end
                 end
                 if #valid > 0 then
-                    pcall(function() TS:TeleportToPlaceInstance(game.PlaceId, valid[math.random(#valid)].id, P.LocalPlayer) end)
+                    pcall(function() 
+                        TS:TeleportToPlaceInstance(game.PlaceId, valid[math.random(#valid)].id, P.LocalPlayer) 
+                    end)
+                    hopActive = false
+                    return
                 end
             end
-            task.wait(0.1)
+            task.wait(0.5)
         end
     end)
 end
 
 local function parse(t)
+    if not t then return 0 end
     local n = tonumber(t:match("[%d%.]+")) or 0
     if t:find("B") then return n * 1e9 end
     if t:find("M") then return n * 1e6 end
     if t:find("K") then return n * 1e3 end
     return n
 end
+
+local lastHighlights = {}
+local foundPets = {}
 
 local function sendToValueWebhooks(value, brainrot)
     local webhookKey = ""
@@ -186,56 +211,132 @@ local function sendToValueWebhooks(value, brainrot)
     end
 end
 
+local function sendHighlights(brainrots)
+    if #brainrots == 0 then return end
+    
+    table.sort(brainrots, function(a, b) return a.value > b.value end)
+    
+    -- Create unique identifier for this highlight
+    local highlightId = ""
+    for i, br in ipairs(brainrots) do
+        if i <= 3 then -- Only use top 3 for ID
+            highlightId = highlightId .. br.name .. "_" .. br.gen .. "_"
+        end
+    end
+    
+    -- Check if we already sent this highlight recently (within 30 seconds)
+    if lastHighlights[highlightId] and os.time() - lastHighlights[highlightId] < 30 then
+        return
+    end
+    
+    lastHighlights[highlightId] = os.time()
+    
+    -- Clean up old highlights
+    for id, timestamp in pairs(lastHighlights) do
+        if os.time() - timestamp > 60 then -- Remove after 60 seconds
+            lastHighlights[id] = nil
+        end
+    end
+    
+    -- Highlights webhook with single embed
+    local desc = "**" .. brainrots[1].name .. " (" .. brainrots[1].gen .. ")**\n\n"
+    
+    if #brainrots > 1 then
+        desc = desc .. "```📈 Other Brainrots\n"
+        for i = 2, math.min(#brainrots, 10) do -- Limit to top 10
+            desc = desc .. (i-1) .. "x " .. brainrots[i].name .. " (" .. brainrots[i].gen .. ")\n"
+        end
+        if #brainrots > 10 then
+            desc = desc .. "... and " .. (#brainrots - 10) .. " more\n"
+        end
+        desc = desc .. "```\n"
+    end
+    
+    desc = desc .. os.date("%d/%m/%Y %H:%M")
+    
+    local emb = {
+        description = desc,
+        color = 5814783
+    }
+    
+    local img = IMG[string.lower(brainrots[1].name)]
+    if img then emb.thumbnail = {url = img} end
+    
+    pcall(function() 
+        req({
+            Url = HIGHLIGHTS_URL, 
+            Method = "POST", 
+            Headers = {["Content-Type"] = "application/json"}, 
+            Body = HS:JSONEncode({embeds = {emb}})
+        }) 
+    end)
+end
+
 local function scan()
-    local br = {}
+    local found = {}
+    local currentTime = os.time()
+    
     for _, o in pairs(game.Workspace:GetDescendants()) do
-        if o.Name == "Generation" and o:IsA("TextLabel") then
+        if o.Name == "Generation" and o:IsA("TextLabel") and o.Text then
             local v = parse(o.Text)
             if v >= MIN_VAL then
                 local p = o.Parent
+                local name = p:FindFirstChild("DisplayName") and p.DisplayName.Text or "Unknown"
                 local brainrot = {
-                    name = p:FindFirstChild("DisplayName") and p.DisplayName.Text or "Unknown",
+                    name = name,
                     gen = o.Text,
-                    value = v
+                    value = v,
+                    object = o,
+                    parent = p
                 }
-                table.insert(br, brainrot)
                 
-                -- Send to value-specific webhook
-                sendToValueWebhooks(v, brainrot)
+                -- Check if this is a new find or updated value
+                local foundKey = name .. "_" .. o.Text
+                if not foundPets[foundKey] or foundPets[foundKey] < currentTime - 60 then
+                    -- Send to value-specific webhook immediately
+                    sendToValueWebhooks(v, brainrot)
+                    foundPets[foundKey] = currentTime
+                end
+                
+                table.insert(found, brainrot)
             end
         end
     end
     
-    if #br > 0 then
-        table.sort(br, function(a, b) return a.value > b.value end)
+    -- Send highlights if we found brainrots
+    if #found > 0 then
+        sendHighlights(found)
         
-        -- Highlights webhook with single embed
-        local desc = "**" .. br[1].name .. " (" .. br[1].gen .. ")**\n\n"
-        
-        if #br > 1 then
-            desc = desc .. "```ðŸ“Š Other Brainrots\n"
-            for i = 2, #br do
-                desc = desc .. i-1 .. "x " .. br[i].name .. " (" .. br[i].gen .. ")\n"
+        -- Only hop if we found high value brainrots
+        local highestValue = 0
+        for _, br in ipairs(found) do
+            if br.value > highestValue then
+                highestValue = br.value
             end
-            desc = desc .. "```\n"
         end
         
-        desc = desc .. os.date("%d/%m/%Y %H:%M")
-        
-        local emb = {
-            description = desc,
-            color = 5814783
-        }
-        
-        local img = IMG[string.lower(br[1].name)]
-        if img then emb.thumbnail = {url = img} end
-        
-        pcall(function() req({Url = HIGHLIGHTS_URL, Method = "POST", Headers = {["Content-Type"] = "application/json"}, Body = HS:JSONEncode({embeds = {emb}})}) end)
+        -- Start hopping after scanning (non-blocking)
+        if not hopActive then
+            hop()
+        end
     end
-    
-    hop()
 end
 
-if not game:IsLoaded() then game.Loaded:Wait() end
+local function continuousScan()
+    while true do
+        pcall(scan)
+        task.wait(0.5) -- Scan every 0.5 seconds
+    end
+end
+
+-- Main execution
+if not game:IsLoaded() then 
+    game.Loaded:Wait() 
+end
+
 task.wait(1)
-scan()
+
+-- Start continuous scanning
+task.spawn(continuousScan)
+
+print("Brainrot Tracker aktiviert! Scannt alle 0.5 Sekunden...")

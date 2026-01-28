@@ -1,5 +1,5 @@
 -- ==============================================================
--- BRAINROT NOTIFY v6.0 - OPTIMIZED SPEED (WORKING)
+-- BRAINROT NOTIFY v6.1 - ALL 10M+ WITH @EVERYONE FOR 50M+
 -- ==============================================================
 
 local Players = game:GetService("Players")
@@ -15,12 +15,12 @@ local Synchronizer = require(Packages:WaitForChild("Synchronizer"))
 local AnimalsData = require(ReplicatedStorage:WaitForChild("Datas"):WaitForChild("Animals"))
 local AnimalsShared = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("Animals"))
 
--- OPTIMIZED CONFIG
-local SCAN_INTERVAL = 0.1 -- 100ms (10x pro Sekunde)
-local WEBHOOK_COOLDOWN = 2 -- 2 Sekunden
+-- CONFIG
+local SCAN_INTERVAL = 0.1 -- 100ms
+local WEBHOOK_COOLDOWN = 2 -- 2 seconds
 local TOP_LIMIT = 8
-local WEBHOOK_THRESHOLD = 10000000 -- 10M
-local EVERYONE_THRESHOLD = 50000000 -- 50M
+local WEBHOOK_THRESHOLD = 10000000 -- 10M Minimum
+local EVERYONE_THRESHOLD = 50000000 -- 50M for @everyone
 local DISCORD_WEBHOOK_URL = "https://ptb.discord.com/api/webhooks/1466102589664792860/B0iNXGjshu9dDosDj0592e2xEkyYSerpUsicj7ci2pF6q-DDQQBgDYx2SC4fmDxub1lC"
 
 -- VARIABLES
@@ -28,13 +28,18 @@ local allAnimalsCache = {}
 local currentTopBrainrots = {}
 local LAST_WEBHOOK_SENT = 0
 local LAST_EVERYONE_TAG = 0
-local EVERYONE_COOLDOWN = 300 -- 5 Minuten
+local EVERYONE_COOLDOWN = 300 -- 5 minutes
 local LP = Players.LocalPlayer
 
 -- PET IMAGES
 local PET_IMAGES = {
     ["Chipso and Queso"] = "https://static.wikia.nocookie.net/stealabr/images/f/f8/Chipsoqueso.png",
     ["La Ginger Sekolah"] = "https://static.wikia.nocookie.net/stealabr/images/f/f4/La_ginger_Sekolah.webp",
+    ["Ketchuru and Musturu"] = "https://static.wikia.nocookie.net/stealabr/images/1/14/Ketchuru.png",
+    ["Garama and Madundung"] = "https://static.wikia.nocookie.net/stealabr/images/e/ee/Garamadundung.png",
+    ["Tacorita Bicicleta"] = "https://static.wikia.nocookie.net/stealabr/images/0/0f/Gonna_rob_you_twin.png",
+    ["Los Bros"] = "https://static.wikia.nocookie.net/stealabr/images/5/53/BROOOOOOOO.png",
+    ["Cooki and Milki"] = "https://static.wikia.nocookie.net/stealabr/images/9/9b/Cooki_and_milki.png",
     ["default"] = "https://cdn.discordapp.com/attachments/1308897786296668302/1451242995713310721/Naughty-Naughty-Icon.png"
 }
 
@@ -76,12 +81,14 @@ local function fastScan()
                         if animalInfo then
                             local genValue = AnimalsShared:GetGeneration(animalName, animalData.Mutation, animalData.Traits, nil)
                             
+                            -- NUR ÜBER 10M FILTERN
                             if genValue >= WEBHOOK_THRESHOLD then
                                 local displayName = animalInfo.DisplayName or animalName
                                 
                                 table.insert(tempAnimals, {
                                     name = displayName,
-                                    genValue = genValue
+                                    genValue = genValue,
+                                    isHighValue = genValue >= EVERYONE_THRESHOLD
                                 })
                             end
                         end
@@ -103,13 +110,14 @@ local function fastScan()
     for i = 1, math.min(#allAnimalsCache, TOP_LIMIT) do
         currentTopBrainrots[i] = {
             name = allAnimalsCache[i].name,
-            mps = allAnimalsCache[i].genValue
+            mps = allAnimalsCache[i].genValue,
+            isHighValue = allAnimalsCache[i].isHighValue
         }
     end
 end
 
 -- ==============================================================
--- FAST WEBHOOK
+-- FAST WEBHOOK - ALLE 10M+ MIT @EVERYONE NUR FÜR 50M+
 -- ==============================================================
 local function sendFastWebhook()
     local currentTime = tick()
@@ -125,12 +133,14 @@ local function sendFastWebhook()
     
     LAST_WEBHOOK_SENT = currentTime
     
-    -- Check for @everyone
+    -- Check for @everyone (NUR 50M+)
     local shouldTagEveryone = false
+    local highValueCount = 0
+    
     for _, brainrot in ipairs(currentTopBrainrots) do
         if brainrot.mps >= EVERYONE_THRESHOLD then
             shouldTagEveryone = true
-            break
+            highValueCount = highValueCount + 1
         end
     end
     
@@ -158,15 +168,24 @@ local function sendFastWebhook()
     
     -- Build embed
     local realJobId = game.JobId
-    local embedColor = shouldTagEveryone and 0xFF0000 or 0xFF9900
+    local embedColor = 0xFF9900 -- Standard orange
+    
+    if highValueCount > 0 then
+        embedColor = 0xFF5500 -- Orange-Rot für 50M+
+    end
+    
+    if highValueCount >= 2 then
+        embedColor = 0xFF0000 -- Rot für mehrere 50M+
+    end
     
     local embed = {
         {
             title = "🧠 BRAINROT ALERT • TOP 8",
             color = embedColor,
-            description = string.format("**%d** brainrots found • **%s/s** top value",
+            description = string.format("**%d** brainrots found • **%s/s** top value%s",
                 #allAnimalsCache,
-                formatMoneyShort(currentTopBrainrots[1] and currentTopBrainrots[1].mps or 0)
+                formatMoneyShort(currentTopBrainrots[1] and currentTopBrainrots[1].mps or 0),
+                highValueCount > 0 and string.format(" • **%d** over 50M+", highValueCount) or ""
             ),
             fields = {
                 { 
@@ -176,7 +195,7 @@ local function sendFastWebhook()
                 },
                 { 
                     name = "📊 STATISTICS", 
-                    value = "🎯 **Threshold:** 10M/s\n⚡ **Refresh:** 100ms\n🔥 **50M+ Alert:** Active", 
+                    value = string.format("🎯 **Threshold:** 10M/s\n⚡ **Refresh:** 100ms\n🔥 **50M+ Count:** %d", highValueCount), 
                     inline = true 
                 },
                 { 
@@ -193,7 +212,7 @@ local function sendFastWebhook()
                 }
             },
             footer = { 
-                text = string.format("v6.0 FAST • %s", os.date("%H:%M:%S")) 
+                text = string.format("v6.1 • %s", os.date("%H:%M:%S")) 
             },
             thumbnail = { 
                 url = PET_IMAGES[currentTopBrainrots[1] and currentTopBrainrots[1].name] or PET_IMAGES["default"] 
@@ -201,10 +220,16 @@ local function sendFastWebhook()
         }
     }
     
+    -- @everyonly NUR bei 50M+ Pets
+    local contentText = nil
+    if shouldTagEveryone then
+        contentText = string.format("@everyone **%d BRAINROTS OVER 50M+!** 🔥", highValueCount)
+    end
+    
     local data = { 
-        content = shouldTagEveryone and "@everyone **50M+ BRAINROT DETECTED!** 🔥" or nil,
+        content = contentText,
         embeds = embed, 
-        username = "Brainrot Notify • v6.0",
+        username = "Brainrot Notify • v6.1",
         avatar_url = PET_IMAGES["default"]
     }
     
@@ -239,8 +264,11 @@ local function sendFastWebhook()
     end)
     
     print("✅ Webhook sent with " .. #currentTopBrainrots .. " brainrots")
-    if shouldTagEveryone then
-        print("🔥 @everyone tagged!")
+    if highValueCount > 0 then
+        print("🔥 " .. highValueCount .. " brainrots over 50M+")
+        if shouldTagEveryone then
+            print("🔔 @everyone tagged!")
+        end
     end
     
     return true
@@ -257,7 +285,7 @@ local function createSimpleUI()
     screenGui.Parent = PlayerGui
     
     local frame = Instance.new("Frame")
-    frame.Size = UDim2.new(0, 250, 0, 100)
+    frame.Size = UDim2.new(0, 250, 0, 120)
     frame.Position = UDim2.new(0, 10, 0, 10)
     frame.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
     frame.BackgroundTransparency = 0.3
@@ -272,7 +300,7 @@ local function createSimpleUI()
     title.Size = UDim2.new(1, -10, 0, 25)
     title.Position = UDim2.new(0, 5, 0, 5)
     title.BackgroundTransparency = 1
-    title.Text = "🧠 BRAINROT v6.0"
+    title.Text = "🧠 BRAINROT v6.1"
     title.TextColor3 = Color3.fromRGB(0, 255, 255)
     title.TextSize = 16
     title.Font = Enum.Font.GothamBold
@@ -293,27 +321,39 @@ local function createSimpleUI()
     
     local topValue = Instance.new("TextLabel")
     topValue.Name = "TopValue"
-    topValue.Size = UDim2.new(1, -10, 0, 20)
+    topValue.Size = UDim2.new(1, -10, 0, 25)
     topValue.Position = UDim2.new(0, 5, 0, 50)
     topValue.BackgroundTransparency = 1
     topValue.Text = "$0/s"
     topValue.TextColor3 = Color3.fromRGB(100, 255, 100)
-    topValue.TextSize = 18
+    topValue.TextSize = 20
     topValue.Font = Enum.Font.GothamBlack
     topValue.TextXAlignment = Enum.TextXAlignment.Left
     topValue.Parent = frame
     
-    local countLabel = Instance.new("TextLabel")
-    countLabel.Name = "Count"
-    countLabel.Size = UDim2.new(1, -10, 0, 15)
-    countLabel.Position = UDim2.new(0, 5, 0, 75)
-    countLabel.BackgroundTransparency = 1
-    countLabel.Text = "0 brainrots"
-    countLabel.TextColor3 = Color3.fromRGB(200, 200, 255)
-    countLabel.TextSize = 12
-    countLabel.Font = Enum.Font.GothamMedium
-    countLabel.TextXAlignment = Enum.TextXAlignment.Left
-    countLabel.Parent = frame
+    local statsLabel = Instance.new("TextLabel")
+    statsLabel.Name = "Stats"
+    statsLabel.Size = UDim2.new(1, -10, 0, 20)
+    statsLabel.Position = UDim2.new(0, 5, 0, 75)
+    statsLabel.BackgroundTransparency = 1
+    statsLabel.Text = "0 brainrots • 0 over 50M+"
+    statsLabel.TextColor3 = Color3.fromRGB(200, 200, 255)
+    statsLabel.TextSize = 12
+    statsLabel.Font = Enum.Font.GothamMedium
+    statsLabel.TextXAlignment = Enum.TextXAlignment.Left
+    statsLabel.Parent = frame
+    
+    local webhookLabel = Instance.new("TextLabel")
+    webhookLabel.Name = "Webhook"
+    webhookLabel.Size = UDim2.new(1, -10, 0, 15)
+    webhookLabel.Position = UDim2.new(0, 5, 0, 95)
+    webhookLabel.BackgroundTransparency = 1
+    webhookLabel.Text = "🔔 Webhook: READY"
+    webhookLabel.TextColor3 = Color3.fromRGB(100, 255, 100)
+    webhookLabel.TextSize = 11
+    webhookLabel.Font = Enum.Font.GothamMedium
+    webhookLabel.TextXAlignment = Enum.TextXAlignment.Left
+    webhookLabel.Parent = frame
     
     return screenGui
 end
@@ -328,28 +368,58 @@ local function updateUI()
     
     local topPet = frame:FindFirstChild("TopPet")
     local topValue = frame:FindFirstChild("TopValue")
-    local countLabel = frame:FindFirstChild("Count")
+    local statsLabel = frame:FindFirstChild("Stats")
+    local webhookLabel = frame:FindFirstChild("Webhook")
     
-    if topPet and topValue and countLabel then
+    if topPet and topValue and statsLabel and webhookLabel then
         if #currentTopBrainrots > 0 then
             topPet.Text = currentTopBrainrots[1].name
             topValue.Text = formatMoneyShort(currentTopBrainrots[1].mps) .. "/s"
             
+            -- Count high value brainrots
+            local highValueCount = 0
+            for _, brainrot in ipairs(currentTopBrainrots) do
+                if brainrot.mps >= EVERYONE_THRESHOLD then
+                    highValueCount = highValueCount + 1
+                end
+            end
+            
             -- Color coding
             if currentTopBrainrots[1].mps >= 100000000 then
                 topValue.TextColor3 = Color3.fromRGB(255, 50, 50)
-            elseif currentTopBrainrots[1].mps >= 50000000 then
+            elseif currentTopBrainrots[1].mps >= EVERYONE_THRESHOLD then
                 topValue.TextColor3 = Color3.fromRGB(255, 150, 50)
             else
                 topValue.TextColor3 = Color3.fromRGB(100, 255, 150)
+            end
+            
+            statsLabel.Text = string.format("%d brainrots • %d over 50M+", 
+                #currentTopBrainrots, highValueCount)
+                
+            if highValueCount > 0 then
+                statsLabel.TextColor3 = Color3.fromRGB(255, 150, 50)
+            else
+                statsLabel.TextColor3 = Color3.fromRGB(200, 200, 255)
             end
         else
             topPet.Text = "No brainrots"
             topValue.Text = "$0/s"
             topValue.TextColor3 = Color3.fromRGB(150, 150, 150)
+            statsLabel.Text = "0 brainrots • 0 over 50M+"
+            statsLabel.TextColor3 = Color3.fromRGB(150, 150, 150)
         end
         
-        countLabel.Text = #allAnimalsCache .. " brainrots total"
+        -- Webhook status
+        local currentTime = tick()
+        local cooldownLeft = math.max(0, LAST_WEBHOOK_SENT + WEBHOOK_COOLDOWN - currentTime)
+        
+        if cooldownLeft > 0 then
+            webhookLabel.Text = string.format("⏳ Cooldown: %ds", math.ceil(cooldownLeft))
+            webhookLabel.TextColor3 = Color3.fromRGB(255, 150, 50)
+        else
+            webhookLabel.Text = "🔔 Webhook: READY"
+            webhookLabel.TextColor3 = Color3.fromRGB(100, 255, 100)
+        end
     end
 end
 
@@ -366,7 +436,7 @@ task.spawn(function()
     end
 end)
 
--- Auto webhook loop (every 30 seconds)
+-- Auto webhook loop (every 30 seconds) - SCHICKT ALLE 10M+
 task.spawn(function()
     while true do
         if #currentTopBrainrots > 0 then
@@ -389,10 +459,20 @@ UIS.InputBegan:Connect(function(io, gp)
     -- F2: Debug info
     elseif io.KeyCode == Enum.KeyCode.F2 then
         print("=== BRAINROT INFO ===")
-        print("Total brainrots: " .. #allAnimalsCache)
-        print("Top 8:")
+        print("Total brainrots (10M+): " .. #allAnimalsCache)
+        
+        local highValueCount = 0
+        for _, brainrot in ipairs(currentTopBrainrots) do
+            if brainrot.mps >= EVERYONE_THRESHOLD then
+                highValueCount = highValueCount + 1
+            end
+        end
+        
+        print("Brainrots over 50M+: " .. highValueCount)
+        print("Top 8 (10M+):")
         for i, brainrot in ipairs(currentTopBrainrots) do
-            print(string.format("%d. %s - %s/s", i, brainrot.name, formatMoneyShort(brainrot.mps)))
+            local tag = brainrot.mps >= EVERYONE_THRESHOLD and "🔥" or "  "
+            print(string.format("%d. %s %s - %s/s", i, tag, brainrot.name, formatMoneyShort(brainrot.mps)))
         end
         print("==================")
     end
@@ -403,26 +483,32 @@ end)
 -- ==============================================================
 print([[
 ╔══════════════════════════════════════════════════════════════╗
-║                BRAINROT NOTIFY v6.0 - WORKING              ║
+║           BRAINROT NOTIFY v6.1 - ALL 10M+ WEBHOOKS         ║
 ╠══════════════════════════════════════════════════════════════╣
-║  ⚡ FAST SCANNING - 100ms intervals                         ║
-║  🔥 @everyone for 50M+ brainrots                           ║
-║  🧠 TOP 8 SYSTEM - Clean & Fast                            ║
-║  🆔 Job ID at bottom                                       ║
+║  📊 SEND ALL 10M+ BRAINROTS                               ║
+║  🔥 @everyonly ONLY for 50M+ (5min cooldown)              ║
+║  🧠 TOP 8 SYSTEM - Shows all 10M+ pets                   ║
+║  🆔 Job ID at bottom                                      ║
 ╠══════════════════════════════════════════════════════════════╣
-║  CONTROLS:                                                  ║
-║  F1 - Send webhook manually                                ║
-║  F2 - Print debug info                                     ║
+║  WEBHOOK RULES:                                           ║
+║  • 10M - 49M: Normal webhook (no @everyone)              ║
+║  • 50M+: Webhook WITH @everyone                          ║
+║  • All brainrots over 10M are sent                      ║
 ╠══════════════════════════════════════════════════════════════╣
-║  AUTO FEATURES:                                            ║
-║  • Scans every 100ms                                       ║
-║  • Auto webhook every 30s                                  ║
-║  • Real-time detection                                     ║
+║  CONTROLS:                                                ║
+║  F1 - Send webhook manually                              ║
+║  F2 - Print debug info                                   ║
+╠══════════════════════════════════════════════════════════════╣
+║  AUTO FEATURES:                                          ║
+║  • Scans every 100ms                                    ║
+║  • Auto webhook every 30s (all 10M+)                   ║
+║  • Real-time detection                                 ║
 ╚══════════════════════════════════════════════════════════════╝
 ]])
 
 print("✅ Script loaded successfully!")
-print("🧠 Scanning for brainrots over 10M/s...")
+print("🧠 Monitoring for ALL brainrots over 10M/s...")
+print("🔥 @everyone only for 50M+ brainrots")
 print("⚡ Speed: 100ms scan interval")
 print("🔔 Auto webhook every 30 seconds")
 

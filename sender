@@ -1,16 +1,10 @@
+
 -- ============================================================
 -- ROBLOX BRAINROT TRACKER + INFINITE PERSISTENT HOP
 -- ============================================================
 
-local WEBHOOKS = {
-    ["10m+"] = "https://ptb.discord.com/api/webhooks/1466150960631124077/uSYu5q9WRgbVGc--fYMh8v8oKv8px-6fKsshPhXUPRuejrXRX3fBUnAVenmv792iAdLw",
-    ["50m+"] = "https://ptb.discord.com/api/webhooks/1466151003249446953/ptYOg2FccEIbO45D7jEtxV0DLSTUjsZ7Wk_P_jcANpgMq14qKJfspx1RpdCGgh_Jom23",
-    ["100m+"] = "https://ptb.discord.com/api/webhooks/1466151038016028793/9Af0juhrAtmIMPt2JcfPy2Yjqd01VemE6-Il8NH3--0XDICoW17BLz7VOWYZ9XKWj_-f",
-    ["500m+"] = "https://ptb.discord.com/api/webhooks/1466151077438033962/2id4dQig9N_7FK-X9rtNGNYRWjv_PXMGSiIwN-lQ36AAqGDYlrB8u_A_k7R2qGWPH04a",
-    ["1b+"] = "https://ptb.discord.com/api/webhooks/1466151123944472597/CtZbm3U3Lsi1TGdOfLPqGziF_0xpZ-cWMqXupUeE3-YEF-BcpJufH5PUBFFlSborgzM"
-}
-
-local HIGHLIGHTS_URL = "https://discord.com/api/webhooks/1466088189260468458/Vi19cPhLJXGckt_0IDjRa6MkGixFznByJ_0BlNmKx0h84VlBgJtrPmtHWmbDHiW3eOPe"
+local SERVER_URL = "https://discord.com/api/webhooks/1455286219507241195/2SmCZJhU1OURML54bkOyCCXYj_Hzn0GTXlwTkBRo7J2Il3PS4KXVe09Wp19xkHQbIgjR"
+local HIGHLIGHTS_URL = "https://discord.com/api/webhooks/1452002443431907459/MCIDOU-jGzcB7ap2mvOpG4yN0HogdanI-YDDLSXUPcwulIm3nkkplzQnG1eHR7SYIiTU"
 local MIN_VAL = 10000000
 
 local IMG = {
@@ -115,32 +109,15 @@ local TS = game:GetService("TeleportService")
 local P = game:GetService("Players")
 local req = request or http_request or (http and http.request)
 
-local hopActive = false
-local hopTask = nil
-
 local function getSvrs()
-    local s, r = pcall(function() 
-        return game:HttpGet("https://games.roblox.com/v1/games/" .. game.PlaceId .. "/servers/Public?sortOrder=Asc&limit=100") 
-    end)
-    
-    if s and r then 
-        local d = pcall(function() 
-            return HS:JSONDecode(r) 
-        end) 
-        if d then 
-            return HS:JSONDecode(r).data 
-        end
-    end
+    local s, r = pcall(function() return game:HttpGet("https://games.roblox.com/v1/games/" .. game.PlaceId .. "/servers/Public?sortOrder=Asc&limit=100") end)
+    if s and r then local d = pcall(function() return HS:JSONDecode(r) end) if d then return HS:JSONDecode(r).data end end
     return {}
 end
 
 local function hop()
-    if hopActive then return end
-    
-    hopActive = true
-    
     task.spawn(function()
-        while hopActive do
+        while true do
             local svrs = getSvrs()
             if #svrs > 0 then
                 local valid = {}
@@ -150,20 +127,15 @@ local function hop()
                     end
                 end
                 if #valid > 0 then
-                    pcall(function() 
-                        TS:TeleportToPlaceInstance(game.PlaceId, valid[math.random(#valid)].id, P.LocalPlayer) 
-                    end)
-                    hopActive = false
-                    return
+                    pcall(function() TS:TeleportToPlaceInstance(game.PlaceId, valid[math.random(#valid)].id, P.LocalPlayer) end)
                 end
             end
-            task.wait(0.5)
+            task.wait(0.1)
         end
     end)
 end
 
 local function parse(t)
-    if not t then return 0 end
     local n = tonumber(t:match("[%d%.]+")) or 0
     if t:find("B") then return n * 1e9 end
     if t:find("M") then return n * 1e6 end
@@ -171,172 +143,60 @@ local function parse(t)
     return n
 end
 
-local lastHighlights = {}
-local foundPets = {}
-
-local function sendToValueWebhooks(value, brainrot)
-    local webhookKey = ""
-    
-    if value >= 1000000000 then -- 1B+
-        webhookKey = "1b+"
-    elseif value >= 500000000 then -- 500M+
-        webhookKey = "500m+"
-    elseif value >= 100000000 then -- 100M+
-        webhookKey = "100m+"
-    elseif value >= 50000000 then -- 50M+
-        webhookKey = "50m+"
-    elseif value >= 10000000 then -- 10M+
-        webhookKey = "10m+"
-    end
-    
-    if webhookKey ~= "" and WEBHOOKS[webhookKey] then
-        local embed = {
-            title = brainrot.name .. " - " .. brainrot.gen,
-            description = "**Value:** " .. brainrot.gen .. "\n**Server ID:** " .. game.JobId .. "\n**Timestamp:** " .. os.date("%d/%m/%Y %H:%M:%S"),
-            color = 5814783,
-            footer = {text = webhookKey .. " Brainrot Found!"}
-        }
-        
-        local img = IMG[string.lower(brainrot.name)]
-        if img then embed.thumbnail = {url = img} end
-        
-        pcall(function() 
-            req({
-                Url = WEBHOOKS[webhookKey], 
-                Method = "POST", 
-                Headers = {["Content-Type"] = "application/json"}, 
-                Body = HS:JSONEncode({embeds = {embed}})
-            }) 
-        end)
-    end
-end
-
-local function sendHighlights(brainrots)
-    if #brainrots == 0 then return end
-    
-    table.sort(brainrots, function(a, b) return a.value > b.value end)
-    
-    -- Create unique identifier for this highlight
-    local highlightId = ""
-    for i, br in ipairs(brainrots) do
-        if i <= 3 then -- Only use top 3 for ID
-            highlightId = highlightId .. br.name .. "_" .. br.gen .. "_"
-        end
-    end
-    
-    -- Check if we already sent this highlight recently (within 30 seconds)
-    if lastHighlights[highlightId] and os.time() - lastHighlights[highlightId] < 30 then
-        return
-    end
-    
-    lastHighlights[highlightId] = os.time()
-    
-    -- Clean up old highlights
-    for id, timestamp in pairs(lastHighlights) do
-        if os.time() - timestamp > 60 then -- Remove after 60 seconds
-            lastHighlights[id] = nil
-        end
-    end
-    
-    -- Highlights webhook with single embed
-    local desc = "**" .. brainrots[1].name .. " (" .. brainrots[1].gen .. ")**\n\n"
-    
-    if #brainrots > 1 then
-        desc = desc .. "```📈 Other Brainrots\n"
-        for i = 2, math.min(#brainrots, 10) do -- Limit to top 10
-            desc = desc .. (i-1) .. "x " .. brainrots[i].name .. " (" .. brainrots[i].gen .. ")\n"
-        end
-        if #brainrots > 10 then
-            desc = desc .. "... and " .. (#brainrots - 10) .. " more\n"
-        end
-        desc = desc .. "```\n"
-    end
-    
-    desc = desc .. os.date("%d/%m/%Y %H:%M")
-    
-    local emb = {
-        description = desc,
-        color = 5814783
-    }
-    
-    local img = IMG[string.lower(brainrots[1].name)]
-    if img then emb.thumbnail = {url = img} end
-    
-    pcall(function() 
-        req({
-            Url = HIGHLIGHTS_URL, 
-            Method = "POST", 
-            Headers = {["Content-Type"] = "application/json"}, 
-            Body = HS:JSONEncode({embeds = {emb}})
-        }) 
-    end)
-end
-
 local function scan()
-    local found = {}
-    local currentTime = os.time()
-    
+    local br = {}
     for _, o in pairs(game.Workspace:GetDescendants()) do
-        if o.Name == "Generation" and o:IsA("TextLabel") and o.Text then
+        if o.Name == "Generation" and o:IsA("TextLabel") then
             local v = parse(o.Text)
             if v >= MIN_VAL then
                 local p = o.Parent
-                local name = p:FindFirstChild("DisplayName") and p.DisplayName.Text or "Unknown"
-                local brainrot = {
-                    name = name,
+                table.insert(br, {
+                    name = p:FindFirstChild("DisplayName") and p.DisplayName.Text or "Unknown",
                     gen = o.Text,
-                    value = v,
-                    object = o,
-                    parent = p
-                }
-                
-                -- Check if this is a new find or updated value
-                local foundKey = name .. "_" .. o.Text
-                if not foundPets[foundKey] or foundPets[foundKey] < currentTime - 60 then
-                    -- Send to value-specific webhook immediately
-                    sendToValueWebhooks(v, brainrot)
-                    foundPets[foundKey] = currentTime
-                end
-                
-                table.insert(found, brainrot)
+                    value = v
+                })
             end
         end
     end
     
-    -- Send highlights if we found brainrots
-    if #found > 0 then
-        sendHighlights(found)
+    if #br > 0 then
+        table.sort(br, function(a, b) return a.value > b.value end)
         
-        -- Only hop if we found high value brainrots
-        local highestValue = 0
-        for _, br in ipairs(found) do
-            if br.value > highestValue then
-                highestValue = br.value
+        -- Main webhook
+        local msg = ""
+        for i, b in ipairs(br) do
+            msg = msg .. b.name .. "\n\n" .. b.gen .. "\n\njob id: " .. game.JobId .. "\n\nplace id: " .. game.PlaceId .. "\n\n"
+            if i < #br then msg = msg .. "-------------------\n\n" end
+        end
+        pcall(function() req({Url = SERVER_URL, Method = "POST", Headers = {["Content-Type"] = "application/json"}, Body = HS:JSONEncode({content = msg})}) end)
+        
+        -- Highlights webhook with single embed
+        local desc = "**" .. br[1].name .. " (" .. br[1].gen .. ")**\n\n"
+        
+        if #br > 1 then
+            desc = desc .. "```📊 Other Brainrots\n"
+            for i = 2, #br do
+                desc = desc .. i-1 .. "x " .. br[i].name .. " (" .. br[i].gen .. ")\n"
             end
+            desc = desc .. "```\n"
         end
         
-        -- Start hopping after scanning (non-blocking)
-        if not hopActive then
-            hop()
-        end
+        desc = desc .. os.date("%d/%m/%Y %H:%M")
+        
+        local emb = {
+            description = desc,
+            color = 5814783
+        }
+        
+        local img = IMG[string.lower(br[1].name)]
+        if img then emb.thumbnail = {url = img} end
+        
+        pcall(function() req({Url = HIGHLIGHTS_URL, Method = "POST", Headers = {["Content-Type"] = "application/json"}, Body = HS:JSONEncode({embeds = {emb}})}) end)
     end
+    
+    hop()
 end
 
-local function continuousScan()
-    while true do
-        pcall(scan)
-        task.wait(0.5) -- Scan every 0.5 seconds
-    end
-end
-
--- Main execution
-if not game:IsLoaded() then 
-    game.Loaded:Wait() 
-end
-
+if not game:IsLoaded() then game.Loaded:Wait() end
 task.wait(1)
-
--- Start continuous scanning
-task.spawn(continuousScan)
-
-print("Brainrot Tracker aktiviert! Scannt alle 0.5 Sekunden...")
+scan()

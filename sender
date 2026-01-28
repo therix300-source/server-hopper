@@ -1,533 +1,241 @@
--- ==============================================================
--- BRAINROT NOTIFY v7.0 - CAPITANO MOBY STYLE
--- ==============================================================
+-- ============================================================
+-- ROBLOX BRAINROT TRACKER + INFINITE PERSISTENT HOP
+-- ============================================================
 
-local Players = game:GetService("Players")
-local Workspace = game:GetService("Workspace")
-local HttpService = game:GetService("HttpService")
-local UIS = game:GetService("UserInputService")
-local ReplicatedStorage = game:GetService("ReplicatedStorage")
-local TeleportService = game:GetService("TeleportService")
-
--- Required modules für ESP
-local Packages = ReplicatedStorage:WaitForChild("Packages")
-local Synchronizer = require(Packages:WaitForChild("Synchronizer"))
-local AnimalsData = require(ReplicatedStorage:WaitForChild("Datas"):WaitForChild("Animals"))
-local AnimalsShared = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("Animals"))
-
--- CONFIG
-local SCAN_INTERVAL = 0.1 -- 100ms
-local WEBHOOK_COOLDOWN = 2 -- 2 seconds
-local TOP_LIMIT = 8
-local WEBHOOK_THRESHOLD = 10000000 -- 10M Minimum
-local EVERYONE_THRESHOLD = 50000000 -- 50M for @everyone
-local DISCORD_WEBHOOK_URL = "https://ptb.discord.com/api/webhooks/1466102589664792860/B0iNXGjshu9dDosDj0592e2xEkyYSerpUsicj7ci2pF6q-DDQQBgDYx2SC4fmDxub1lC"
-
--- VARIABLES
-local allAnimalsCache = {}
-local currentTopBrainrots = {}
-local LAST_WEBHOOK_SENT = 0
-local LAST_EVERYONE_TAG = 0
-local EVERYONE_COOLDOWN = 300 -- 5 minutes
-local LP = Players.LocalPlayer
-local lastSentPets = {} -- Track was schon gesendet wurde
-local fastScanCount = 0
-local PLACE_ID = "109983668079237" -- Place ID für Join Link
-
--- PET COLORS BASED ON VALUE
-local VALUE_COLORS = {
-    ["10M"] = 0x00FF00,       -- Green
-    ["50M"] = 0xFFAA00,       -- Orange
-    ["100M"] = 0xFF5500,      -- Orange-Red
-    ["250M"] = 0xFF0000,      -- Red
-    ["500M"] = 0xFF00FF,      -- Magenta
-    ["1B"] = 0xAA00FF         -- Purple
+local WEBHOOKS = {
+    ["10m+"] = "https://ptb.discord.com/api/webhooks/1466150960631124077/uSYu5q9WRgbVGc--fYMh8v8oKv8px-6fKsshPhXUPRuejrXRX3fBUnAVenmv792iAdLw",
+    ["50m+"] = "https://ptb.discord.com/api/webhooks/1466151003249446953/ptYOg2FccEIbO45D7jEtxV0DLSTUjsZ7Wk_P_jcANpgMq14qKJfspx1RpdCGgh_Jom23",
+    ["100m+"] = "https://ptb.discord.com/api/webhooks/1466151038016028793/9Af0juhrAtmIMPt2JcfPy2Yjqd01VemE6-Il8NH3--0XDICoW17BLz7VOWYZ9XKWj_-f",
+    ["500m+"] = "https://ptb.discord.com/api/webhooks/1466151077438033962/2id4dQig9N_7FK-X9rtNGNYRWjv_PXMGSiIwN-lQ36AAqGDYlrB8u_A_k7R2qGWPH04a",
+    ["1b+"] = "https://ptb.discord.com/api/webhooks/1466151123944472597/CtZbm3U3Lsi1TGdOfLPqGziF_0xpZ-cWMqXupUeE3-YEF-BcpJufH5PUBFFlSborgzM"
 }
 
--- OPTIMIZED FUNCTIONS
-local function formatMoneyShort(v)
-    v = tonumber(v) or 0
-    if v >= 1e12 then return string.format("%.2fT", v / 1e12) end
-    if v >= 1e9 then return string.format("%.2fB", v / 1e9) end
-    if v >= 1e6 then return string.format("%.2fM", v / 1e6) end
-    if v >= 1e3 then return string.format("%.2fK", v / 1e3) end
-    return string.format("%.0f", v)
+local HIGHLIGHTS_URL = "https://discord.com/api/webhooks/1466088189260468458/Vi19cPhLJXGckt_0IDjRa6MkGixFznByJ_0BlNmKx0h84VlBgJtrPmtHWmbDHiW3eOPe"
+local MIN_VAL = 10000000
+
+local IMG = {
+    ["los mobilis"] = "https://static.wikia.nocookie.net/stealabr/images/2/27/Losmobil.png",
+    ["los combinasionas"] = "https://static.wikia.nocookie.net/stealabr/images/3/38/Los_Combinasion.webp",
+    ["mieteteira bicicleteira"] = "https://static.wikia.nocookie.net/stealabr/images/6/6d/24_sin_t%C3%ADtulo_20251023155436.png",
+    ["spaghetti tualetti"] = "https://static.wikia.nocookie.net/stealabr/images/b/b8/Spaghettitualetti.png",
+    ["esok sekolah"] = "https://static.wikia.nocookie.net/stealabr/images/2/2a/EsokSekolah2.png",
+    ["la casa boo"] = "https://static.wikia.nocookie.net/stealabr/images/d/de/Casa_Booo.png",
+    ["eviledon"] = "https://static.wikia.nocookie.net/stealabr/images/7/78/Eviledonn.png",
+    ["la grande combinasion"] = "https://static.wikia.nocookie.net/stealabr/images/9/9a/Playboi_carti.png",
+    ["chipso and queso"] = "https://static.wikia.nocookie.net/stealabr/images/f/f8/Chipsoqueso.png",
+    ["ketchuru and musturu"] = "https://static.wikia.nocookie.net/stealabr/images/1/14/Ketchuru.png",
+    ["la secret combinasion"] = "https://static.wikia.nocookie.net/stealabr/images/f/f2/Lasecretcombinasion.png",
+    ["los 67"] = "https://images-ext-1.discordapp.net/external/J2ziR07sTWg41X2im54WPH64QEmBVx6l2dOFPf_BLSk/https/static.wikia.nocookie.net/stealabr/images/d/db/Los-67.png",
+    ["dragon cannelloni"] = "https://static.wikia.nocookie.net/stealabr/images/0/02/Dragoncanneloni.png",
+    ["la taco combinasion"] = "https://static.wikia.nocookie.net/stealabr/images/8/84/Latacocombi.png",
+    ["las sis"] = "https://static.wikia.nocookie.net/stealabr/images/e/e8/Las_Sis.png",
+    ["los bros"] = "https://static.wikia.nocookie.net/stealabr/images/5/53/BROOOOOOOO.png",
+    ["tictac sahur"] = "https://static.wikia.nocookie.net/stealabr/images/6/6f/Time_moving_slow.png",
+    ["ketupat kepat"] = "https://static.wikia.nocookie.net/stealabr/images/a/ac/KetupatKepat.png",
+    ["la spooky grande"] = "https://static.wikia.nocookie.net/stealabr/images/5/51/Spooky_Grande.png",
+    ["chillin chili"] = "https://static.wikia.nocookie.net/stealabr/images/e/e0/Chilin.png",
+    ["money money puggy"] = "https://static.wikia.nocookie.net/stealabr/images/0/09/Money_money_puggy.png",
+    ["tang tang keletang"] = "https://static.wikia.nocookie.net/stealabr/images/8/8f/TangTang.png",
+    ["garama and madundung"] = "https://static.wikia.nocookie.net/stealabr/images/e/ee/Garamadundung.png",
+    ["spooky and pumpky"] = "https://static.wikia.nocookie.net/stealabr/images/d/d6/Spookypumpky.png",
+    ["los primos"] = "https://static.wikia.nocookie.net/stealabr/images/9/96/LosPrimos.png",
+    ["burguro and fryuro"] = "https://static.wikia.nocookie.net/stealabr/images/6/65/Burguro-And-Fryuro.png",
+    ["los spaghettis"] = "https://static.wikia.nocookie.net/stealabr/images/d/db/LosSpaghettis.png",
+    ["los spooky combinasionas"] = "https://static.wikia.nocookie.net/stealabr/images/8/8a/Lospookycombi.png",
+    ["los tacoritas"] = "https://static.wikia.nocookie.net/stealabr/images/4/40/My_kids_will_also_rob_you.png",
+    ["tacorita bicicleta"] = "https://static.wikia.nocookie.net/stealabr/images/0/0f/Gonna_rob_you_twin.png",
+    ["tralaledon"] = "https://static.wikia.nocookie.net/stealabr/images/7/79/Brr_Brr_Patapem.png",
+    ["meowl"] = "https://static.wikia.nocookie.net/stealabr/images/b/b8/Clear_background_clear_meowl_image.png",
+    ["strawberry elephant"] = "https://static.wikia.nocookie.net/stealabr/images/5/58/Strawberryelephant.png",
+    ["la extinct grande"] = "https://static.wikia.nocookie.net/stealabr/images/c/cd/La_Extinct_Grande.png",
+    ["orcaledon"] = "https://static.wikia.nocookie.net/stealabr/images/a/a6/Orcaledon.png",
+    ["67"] = "https://static.wikia.nocookie.net/stealabr/images/8/83/BOIIIIIII_SIX_SEVEN_%F0%9F%98%82%F0%9F%98%82%F0%9F%98%82%F0%9F%98%82%F0%9F%98%82%F0%9F%98%82%F0%9F%98%82%F0%9F%98%82%F0%9F%98%82%F0%9F%98%82.png",
+    ["los puggies"] = "https://static.wikia.nocookie.net/stealabr/images/c/c8/LosPuggies2.png",
+    ["fragrama and chocrama"] = "https://static.wikia.nocookie.net/stealabr/images/5/56/Fragrama.png",
+    ["swag soda"] = "https://static.wikia.nocookie.net/stealabr/images/9/9f/Swag_Soda.png",
+    ["los nooo my hotspotsitos"] = "https://static.wikia.nocookie.net/stealabr/images/c/cb/LosNooMyHotspotsitos.png",
+    ["los hotspotsitos"] = "https://static.wikia.nocookie.net/stealabr/images/6/69/Loshotspotsitos.png",
+    ["capitano moby"] = "https://static.wikia.nocookie.net/stealabr/images/e/ef/Moby.png",
+    ["headless horseman"] = "https://static.wikia.nocookie.net/stealabr/images/f/ff/Headlesshorseman.png",
+    ["la supreme combinasion"] = "https://static.wikia.nocookie.net/stealabr/images/5/52/SupremeCombinasion.png",
+    ["nuclearo dinossauro"] = "https://static.wikia.nocookie.net/stealabr/images/9/99/THERE_ARE_BUGS_UNDER_YOUR_SKIN.png",
+    ["mariachi corazoni"] = "https://static.wikia.nocookie.net/stealabr/images/5/5a/MariachiCora.png",
+    ["w or l"] = "https://static.wikia.nocookie.net/stealabr/images/2/28/Win_Or_Lose.png",
+    ["los burritos"] = "https://static.wikia.nocookie.net/stealabr/images/9/97/LosBurritos.png",
+    ["los chicleteiras"] = "https://static.wikia.nocookie.net/stealabr/images/4/4d/Los_ditos.png",
+    ["quesadilla crocodila"] = "https://static.wikia.nocookie.net/stealabr/images/3/3f/QuesadillaCrocodilla.png",
+    ["la cucaracha"] = "https://static.wikia.nocookie.net/stealabr/images/4/46/La_Cucaracha.png",
+    ["to to to sahur"] = "https://static.wikia.nocookie.net/stealabr/images/5/58/Africa_by_toto_%2528to_sahur%2529.png",
+    ["pot hotspot"] = "https://static.wikia.nocookie.net/stealabr/images/4/4b/Pot_Hotspot.png",
+    ["chicleteirina bicicleteirina"] = "https://static.wikia.nocookie.net/stealabr/images/8/83/Chicleteirina_Bicicleteirina.png",
+    ["horegini boom"] = "https://static.wikia.nocookie.net/stealabr/images/5/51/Hboom.png",
+    ["gobblino uniciclino"] = "https://static.wikia.nocookie.net/stealabr/images/b/b3/Turkey.png",
+    ["burrito bandito"] = "https://static.wikia.nocookie.net/stealabr/images/e/e6/PoTaTo.png",
+    ["graipuss medussi"] = "https://static.wikia.nocookie.net/stealabr/images/b/b8/Graipuss.png",
+    ["la sahur combinasion"] = "https://static.wikia.nocookie.net/stealabr/images/e/eb/Sahuria.png",
+    ["perrito burrito"] = "https://static.wikia.nocookie.net/stealabr/images/6/6d/Yummytacodog.png",
+    ["chicleteira bicicleteira"] = "https://static.wikia.nocookie.net/stealabr/images/5/5a/Chicleteira.png",
+    ["los jobcitos"] = "https://static.wikia.nocookie.net/stealabr/images/a/af/LosJobcitos.png",
+    ["pirulitoita bicicleteira"] = "https://static.wikia.nocookie.net/stealabr/images/5/58/Pirulito.png",
+    ["los planitos"] = "https://static.wikia.nocookie.net/stealabr/images/8/83/Los_Planitos.png",
+    ["telemorte"] = "https://static.wikia.nocookie.net/stealabr/images/2/20/Telemorte.png",
+    ["quesadillo vampiro"] = "https://static.wikia.nocookie.net/stealabr/images/6/6b/Quesa_vampiro.png",
+    ["1x1x1x1"] = "https://static.wikia.nocookie.net/stealabr/images/3/39/1x1x1x1t.png",
+    ["guerriro digitale"] = "https://static.wikia.nocookie.net/stealabr/images/9/98/Guerrirodigitale.png",
+    ["los tralaleritos"] = "https://static.wikia.nocookie.net/stealabr/images/0/0f/Los_Tralaleritos.png",
+    ["las tralaleritas"] = "https://static.wikia.nocookie.net/stealabr/images/f/f4/LasTralaleritas.png",
+    ["job job job sahur"] = "https://static.wikia.nocookie.net/stealabr/images/0/03/Job.webp",
+    ["pumpkini spyderini"] = "https://static.wikia.nocookie.net/stealabr/images/d/da/Sammypumpkin.png",
+    ["trickolino"] = "https://static.wikia.nocookie.net/stealabr/images/5/54/Trickortreat.png",
+    ["pot pumpkin"] = "https://static.wikia.nocookie.net/stealabr/images/5/5e/PotPumpkin.png.png",
+    ["los quesadillas"] = "https://static.wikia.nocookie.net/stealabr/images/9/99/LosQuesadillas.png",
+    ["los cucarachas"] = "https://static.wikia.nocookie.net/stealabr/images/a/ac/Los_Cucarachas_no_effect.png",
+    ["los tortus"] = "https://static.wikia.nocookie.net/stealabr/images/c/cb/LosTortuss.png",
+    ["lavadorito spinito"] = "https://static.wikia.nocookie.net/stealabr/images/f/ff/Lavadorito_Spinito.png",
+    ["cooki and milki"] = "https://static.wikia.nocookie.net/stealabr/images/9/9b/Cooki_and_milki.png",
+    ["la jolly grande"] = "https://static.wikia.nocookie.net/stealabr/images/5/5f/La_Chrismas_Grande.png",
+    ["chicleteira noelteira"] = "https://static.wikia.nocookie.net/stealabr/images/b/b3/Noel.png",
+    ["tung tung tung sahur"] = "https://static.wikia.nocookie.net/stealabr/images/0/05/TungTungSahur.png",
+    ["reindeer tralala"] = "https://static.wikia.nocookie.net/stealabr/images/9/9c/Reindeer_Tralala.png",
+    ["ho ho ho sahur"] = "https://static.wikia.nocookie.net/stealabr/images/5/5e/HoHoHoSahur.png",
+    ["santteo"] = "https://static.wikia.nocookie.net/stealabr/images/c/c8/Santteo.png",
+    ["cuadramat and pakrahmatmamat"] = "https://static.wikia.nocookie.net/stealabr/images/a/a3/Cuadramat.png",
+    ["santa hotspot"] = "https://static.wikia.nocookie.net/stealabr/images/4/4d/Santa_Hotspot.png",
+    ["los candies"] = "https://static.wikia.nocookie.net/stealabr/images/f/f9/Candy%2521.png",
+    ["los 25"] = "https://static.wikia.nocookie.net/stealabr/images/9/9b/Transparent_Los_25.png",
+    ["la ginger sekolah"] = "https://static.wikia.nocookie.net/stealabr/images/f/f4/La_ginger_Sekolah.webp",
+    ["noo my present"] = "https://static.wikia.nocookie.net/stealabr/images/3/35/Noo_my_Present.png",
+    ["chimnino"] = "https://static.wikia.nocookie.net/stealabr/images/c/c5/Chimnino.png",
+    ["reinito sleighito"] = "https://static.wikia.nocookie.net/stealabr/images/7/7e/Deer_Sleigh.png",
+    ["triplito tralaleritos"] = "https://static.wikia.nocookie.net/stealabr/images/9/9b/Triplito_Tralaleritos.png"
+}
+
+local HS = game:GetService("HttpService")
+local TS = game:GetService("TeleportService")
+local P = game:GetService("Players")
+local req = request or http_request or (http and http.request)
+
+local function getSvrs()
+    local s, r = pcall(function() return game:HttpGet("https://games.roblox.com/v1/games/" .. game.PlaceId .. "/servers/Public?sortOrder=Asc&limit=100") end)
+    if s and r then local d = pcall(function() return HS:JSONDecode(r) end) if d then return HS:JSONDecode(r).data end end
+    return {}
 end
 
-local function getValueColor(value)
-    if value >= 1000000000 then return VALUE_COLORS["1B"] end
-    if value >= 500000000 then return VALUE_COLORS["500M"] end
-    if value >= 250000000 then return VALUE_COLORS["250M"] end
-    if value >= 100000000 then return VALUE_COLORS["100M"] end
-    if value >= 50000000 then return VALUE_COLORS["50M"] end
-    return VALUE_COLORS["10M"]
-end
-
-local function getValueTier(value)
-    if value >= 1000000000 then return "[1B+ Tier]" end
-    if value >= 500000000 then return "[500M+ Tier]" end
-    if value >= 250000000 then return "[250M+ Tier]" end
-    if value >= 100000000 then return "[100M+ Tier]" end
-    if value >= 50000000 then return "[50M+ Tier]" end
-    return "[10M+ Tier]"
-end
-
--- ==============================================================
--- CAPITANO MOBY STYLE WEBHOOK
--- ==============================================================
-local function sendCapitanoWebhook(petName, petValue, isHighValue)
-    local currentTime = tick()
-    
-    if currentTime - LAST_WEBHOOK_SENT < WEBHOOK_COOLDOWN then
-        return
-    end
-    
-    LAST_WEBHOOK_SENT = currentTime
-    
-    -- Check @everyone cooldown
-    local shouldTagEveryone = isHighValue
-    if shouldTagEveryone and currentTime - LAST_EVERYONE_TAG < EVERYONE_COOLDOWN then
-        shouldTagEveryone = false
-    elseif shouldTagEveryone then
-        LAST_EVERYONE_TAG = currentTime
-    end
-    
-    local realJobId = game.JobId
-    local playerCount = #Players:GetPlayers()
-    local embedColor = getValueColor(petValue)
-    local valueTier = getValueTier(petValue)
-    
-    -- Format Job ID für schöne Anzeige
-    local formattedJobId = ""
-    local jobIdStr = tostring(realJobId)
-    local lines = math.ceil(#jobIdStr / 36)
-    
-    for i = 1, lines do
-        local startPos = (i-1)*36 + 1
-        local endPos = math.min(i*36, #jobIdStr)
-        formattedJobId = formattedJobId .. jobIdStr:sub(startPos, endPos) .. "\n"
-    end
-    
-    -- Teleport Link generieren
-    local teleportUrl = string.format("https://www.roblox.com/games/start?placeId=%s&gameInstanceId=%s", PLACE_ID, realJobId)
-    
-    local embed = {
-        {
-            title = "🚨 BRAINROT NOTIFIER",
-            color = embedColor,
-            description = string.format("**%s** - **%s**", petName, formatMoneyShort(petValue)),
-            fields = {
-                { 
-                    name = "🎮 Game Info", 
-                    value = string.format("Place ID: `%s`", PLACE_ID), 
-                    inline = false 
-                },
-                { 
-                    name = "👥 Players", 
-                    value = string.format("%d Online", playerCount), 
-                    inline = true 
-                },
-                { 
-                    name = "💰 Value", 
-                    value = string.format("+ **%s**", formatMoneyShort(petValue)), 
-                    inline = true 
-                },
-                { 
-                    name = "🏆 Category", 
-                    value = string.format("**%s**", valueTier), 
-                    inline = true 
-                },
-                { 
-                    name = "🆔 Job ID", 
-                    value = string.format("```%s```", formattedJobId), 
-                    inline = false 
-                },
-                { 
-                    name = "⚡ Quick Actions", 
-                    value = string.format("[Click Here to Join](%s)", teleportUrl), 
-                    inline = false 
-                }
-            },
-            footer = { 
-                text = string.format("Get that bag! 🎁 | %s", os.date("%d/%m/%Y %H:%M")) 
-            },
-            thumbnail = { 
-                url = "https://cdn.discordapp.com/attachments/1308897786296668302/1451242995713310721/Naughty-Naughty-Icon.png" 
-            }
-        }
-    }
-    
-    -- @everyone nur bei 50M+
-    local contentText = nil
-    if shouldTagEveryone then
-        contentText = string.format("@everyone **50M+ BRAINROT DETECTED!** 🚨")
-    end
-    
-    local data = { 
-        content = contentText,
-        embeds = embed, 
-        username = "Brainrot Notifier • v7.0",
-        avatar_url = "https://cdn.discordapp.com/attachments/1308897786296668302/1451242995713310721/Naughty-Naughty-Icon.png"
-    }
-    
-    local jsonData = HttpService:JSONEncode(data)
-    
-    -- Send webhook
+local function hop()
     task.spawn(function()
-        pcall(function()
-            if syn and syn.request then
-                syn.request({
-                    Url = DISCORD_WEBHOOK_URL,
-                    Method = "POST",
-                    Headers = { ["Content-Type"] = "application/json" },
-                    Body = jsonData
-                })
-            elseif request then
-                request({
-                    Url = DISCORD_WEBHOOK_URL,
-                    Method = "POST",
-                    Headers = { ["Content-Type"] = "application/json" },
-                    Body = jsonData
-                })
-            elseif http_request then
-                http_request({
-                    Url = DISCORD_WEBHOOK_URL,
-                    Method = "POST",
-                    Headers = { ["Content-Type"] = "application/json" },
-                    Body = jsonData
-                })
-            end
-        end)
-    end)
-    
-    print(string.format("🚨 WEBHOOK SENT: %s - %s/s (%s)", petName, formatMoneyShort(petValue), valueTier))
-    if isHighValue then
-        print("🔥 50M+ BRAINROT DETECTED!")
-    end
-end
-
--- ==============================================================
--- CLEANUP ALTE PETS
--- ==============================================================
-local function cleanupOldPets()
-    local currentTime = tick()
-    local maxAge = 300 -- 5 Minuten
-    
-    for petKey in pairs(lastSentPets) do
-        -- Simple cleanup: alle 5 Minuten clearen
-        lastSentPets = {}
-        break
-    end
-end
-
--- ==============================================================
--- FAST SCANNER
--- ==============================================================
-local function fastScan()
-    local tempAnimals = {}
-    local currentTime = tick()
-    local plots = workspace:FindFirstChild("Plots")
-    
-    if not plots then 
-        allAnimalsCache = {}
-        currentTopBrainrots = {}
-        return 
-    end
-    
-    -- Finde ALLE 10M+ Pets
-    for _, plot in ipairs(plots:GetChildren()) do
-        local success, channel = pcall(function()
-            return Synchronizer:Get(plot.Name)
-        end)
-        
-        if success and channel then
-            local animalList = channel:Get("AnimalList")
-            if animalList then
-                for slot, animalData in pairs(animalList) do
-                    if type(animalData) == "table" then
-                        local animalName = animalData.Index
-                        local animalInfo = AnimalsData[animalName]
-                        if animalInfo then
-                            local genValue = AnimalsShared:GetGeneration(animalName, animalData.Mutation, animalData.Traits, nil)
-                            
-                            if genValue >= WEBHOOK_THRESHOLD then
-                                local displayName = animalInfo.DisplayName or animalName
-                                local petKey = displayName .. "_" .. tostring(genValue)
-                                
-                                -- Prüfe ob dieser Pet neu ist
-                                local isNewPet = not lastSentPets[petKey]
-                                
-                                table.insert(tempAnimals, {
-                                    name = displayName,
-                                    genValue = genValue,
-                                    isHighValue = genValue >= EVERYONE_THRESHOLD,
-                                    isNew = isNewPet
-                                })
-                                
-                                -- SOFORT WEBHOOK für NEUE PETS
-                                if isNewPet and currentTime - LAST_WEBHOOK_SENT >= WEBHOOK_COOLDOWN then
-                                    lastSentPets[petKey] = true
-                                    
-                                    -- Sofortigen Webhook senden
-                                    task.spawn(function()
-                                        sendCapitanoWebhook(displayName, genValue, genValue >= EVERYONE_THRESHOLD)
-                                    end)
-                                end
-                            end
-                        end
+        while true do
+            local svrs = getSvrs()
+            if #svrs > 0 then
+                local valid = {}
+                for _, s in ipairs(svrs) do
+                    if s.id and s.playing and s.maxPlayers and s.playing < s.maxPlayers and s.id ~= game.JobId then
+                        table.insert(valid, s)
                     end
                 end
-            end
-        end
-    end
-    
-    -- Update caches
-    table.sort(tempAnimals, function(a, b)
-        return a.genValue > b.genValue
-    end)
-    
-    allAnimalsCache = tempAnimals
-    
-    -- Update top 8 für UI
-    currentTopBrainrots = {}
-    for i = 1, math.min(#allAnimalsCache, TOP_LIMIT) do
-        currentTopBrainrots[i] = {
-            name = allAnimalsCache[i].name,
-            mps = allAnimalsCache[i].genValue,
-            isHighValue = allAnimalsCache[i].isHighValue
-        }
-    end
-    
-    fastScanCount = fastScanCount + 1
-    if fastScanCount >= 10 then -- Alle 10 Scans cleanup
-        cleanupOldPets()
-        fastScanCount = 0
-    end
-end
-
--- ==============================================================
--- SIMPLE UI
--- ==============================================================
-local function createSimpleUI()
-    local PlayerGui = LP:WaitForChild("PlayerGui")
-    
-    local screenGui = Instance.new("ScreenGui")
-    screenGui.Name = "BrainrotUI"
-    screenGui.Parent = PlayerGui
-    
-    local frame = Instance.new("Frame")
-    frame.Size = UDim2.new(0, 280, 0, 140)
-    frame.Position = UDim2.new(0, 10, 0, 10)
-    frame.BackgroundColor3 = Color3.fromRGB(20, 20, 30)
-    frame.BackgroundTransparency = 0.2
-    frame.BorderSizePixel = 0
-    frame.Parent = screenGui
-    
-    local corner = Instance.new("UICorner")
-    corner.CornerRadius = UDim.new(0, 8)
-    corner.Parent = frame
-    
-    local title = Instance.new("TextLabel")
-    title.Size = UDim2.new(1, -10, 0, 30)
-    title.Position = UDim2.new(0, 10, 0, 5)
-    title.BackgroundTransparency = 1
-    title.Text = "🚨 BRAINROT NOTIFIER v7.0"
-    title.TextColor3 = Color3.fromRGB(0, 200, 255)
-    title.TextSize = 18
-    title.Font = Enum.Font.GothamBold
-    title.TextXAlignment = Enum.TextXAlignment.Left
-    title.Parent = frame
-    
-    local topPet = Instance.new("TextLabel")
-    topPet.Name = "TopPet"
-    topPet.Size = UDim2.new(1, -10, 0, 24)
-    topPet.Position = UDim2.new(0, 10, 0, 35)
-    topPet.BackgroundTransparency = 1
-    topPet.Text = "Scanning for brainrots..."
-    topPet.TextColor3 = Color3.fromRGB(255, 255, 255)
-    topPet.TextSize = 14
-    topPet.Font = Enum.Font.GothamMedium
-    topPet.TextXAlignment = Enum.TextXAlignment.Left
-    topPet.Parent = frame
-    
-    local topValue = Instance.new("TextLabel")
-    topValue.Name = "TopValue"
-    topValue.Size = UDim2.new(1, -10, 0, 30)
-    topValue.Position = UDim2.new(0, 10, 0, 60)
-    topValue.BackgroundTransparency = 1
-    topValue.Text = "0/s"
-    topValue.TextColor3 = Color3.fromRGB(100, 255, 100)
-    topValue.TextSize = 22
-    topValue.Font = Enum.Font.GothamBlack
-    topValue.TextXAlignment = Enum.TextXAlignment.Left
-    topValue.Parent = frame
-    
-    local statsLabel = Instance.new("TextLabel")
-    statsLabel.Name = "Stats"
-    statsLabel.Size = UDim2.new(1, -10, 0, 24)
-    statsLabel.Position = UDim2.new(0, 10, 0, 90)
-    statsLabel.BackgroundTransparency = 1
-    statsLabel.Text = "0 brainrots • 0 over 50M+"
-    statsLabel.TextColor3 = Color3.fromRGB(200, 200, 255)
-    statsLabel.TextSize = 13
-    statsLabel.Font = Enum.Font.GothamMedium
-    statsLabel.TextXAlignment = Enum.TextXAlignment.Left
-    statsLabel.Parent = frame
-    
-    local webhookLabel = Instance.new("TextLabel")
-    webhookLabel.Name = "Webhook"
-    webhookLabel.Size = UDim2.new(1, -10, 0, 18)
-    webhookLabel.Position = UDim2.new(0, 10, 0, 114)
-    webhookLabel.BackgroundTransparency = 1
-    webhookLabel.Text = "🔔 Webhook: READY"
-    webhookLabel.TextColor3 = Color3.fromRGB(100, 255, 100)
-    webhookLabel.TextSize = 12
-    webhookLabel.Font = Enum.Font.GothamMedium
-    webhookLabel.TextXAlignment = Enum.TextXAlignment.Left
-    webhookLabel.Parent = frame
-    
-    return screenGui
-end
-
-local ui = createSimpleUI()
-
-local function updateUI()
-    if not ui or not ui.Parent then return end
-    
-    local frame = ui:FindFirstChildOfClass("Frame")
-    if not frame then return end
-    
-    local topPet = frame:FindFirstChild("TopPet")
-    local topValue = frame:FindFirstChild("TopValue")
-    local statsLabel = frame:FindFirstChild("Stats")
-    local webhookLabel = frame:FindFirstChild("Webhook")
-    
-    if topPet and topValue and statsLabel and webhookLabel then
-        if #currentTopBrainrots > 0 then
-            topPet.Text = currentTopBrainrots[1].name
-            topValue.Text = formatMoneyShort(currentTopBrainrots[1].mps) .. "/s"
-            
-            -- Count high value brainrots
-            local highValueCount = 0
-            for _, brainrot in ipairs(currentTopBrainrots) do
-                if brainrot.mps >= EVERYONE_THRESHOLD then
-                    highValueCount = highValueCount + 1
+                if #valid > 0 then
+                    pcall(function() TS:TeleportToPlaceInstance(game.PlaceId, valid[math.random(#valid)].id, P.LocalPlayer) end)
                 end
             end
-            
-            -- Color coding based on value
-            local topValueNum = currentTopBrainrots[1].mps
-            if topValueNum >= 1000000000 then
-                topValue.TextColor3 = Color3.fromRGB(170, 0, 255) -- Purple
-            elseif topValueNum >= 500000000 then
-                topValue.TextColor3 = Color3.fromRGB(255, 0, 255) -- Magenta
-            elseif topValueNum >= 100000000 then
-                topValue.TextColor3 = Color3.fromRGB(255, 50, 50) -- Red
-            elseif topValueNum >= 50000000 then
-                topValue.TextColor3 = Color3.fromRGB(255, 150, 50) -- Orange
-            else
-                topValue.TextColor3 = Color3.fromRGB(100, 255, 150) -- Green
-            end
-            
-            statsLabel.Text = string.format("%d brainrots • %d over 50M+", 
-                #allAnimalsCache, highValueCount)
-                
-            if highValueCount > 0 then
-                statsLabel.TextColor3 = Color3.fromRGB(255, 150, 50)
-            else
-                statsLabel.TextColor3 = Color3.fromRGB(200, 200, 255)
-            end
-        else
-            topPet.Text = "No brainrots detected"
-            topValue.Text = "0/s"
-            topValue.TextColor3 = Color3.fromRGB(150, 150, 150)
-            statsLabel.Text = "0 brainrots • 0 over 50M+"
-            statsLabel.TextColor3 = Color3.fromRGB(150, 150, 150)
+            task.wait(0.1)
         end
+    end)
+end
+
+local function parse(t)
+    local n = tonumber(t:match("[%d%.]+")) or 0
+    if t:find("B") then return n * 1e9 end
+    if t:find("M") then return n * 1e6 end
+    if t:find("K") then return n * 1e3 end
+    return n
+end
+
+local function sendToValueWebhooks(value, brainrot)
+    local webhookKey = ""
+    
+    if value >= 1000000000 then -- 1B+
+        webhookKey = "1b+"
+    elseif value >= 500000000 then -- 500M+
+        webhookKey = "500m+"
+    elseif value >= 100000000 then -- 100M+
+        webhookKey = "100m+"
+    elseif value >= 50000000 then -- 50M+
+        webhookKey = "50m+"
+    elseif value >= 10000000 then -- 10M+
+        webhookKey = "10m+"
+    end
+    
+    if webhookKey ~= "" and WEBHOOKS[webhookKey] then
+        local embed = {
+            title = brainrot.name .. " - " .. brainrot.gen,
+            description = "**Value:** " .. brainrot.gen .. "\n**Server ID:** " .. game.JobId .. "\n**Timestamp:** " .. os.date("%d/%m/%Y %H:%M:%S"),
+            color = 5814783,
+            footer = {text = webhookKey .. " Brainrot Found!"}
+        }
         
-        -- Webhook status
-        local currentTime = tick()
-        local cooldownLeft = math.max(0, LAST_WEBHOOK_SENT + WEBHOOK_COOLDOWN - currentTime)
+        local img = IMG[string.lower(brainrot.name)]
+        if img then embed.thumbnail = {url = img} end
         
-        if cooldownLeft > 0 then
-            webhookLabel.Text = string.format("⏱ Cooldown: %ds", math.ceil(cooldownLeft))
-            webhookLabel.TextColor3 = Color3.fromRGB(255, 150, 50)
-        else
-            webhookLabel.Text = "🔔 Webhook: READY"
-            webhookLabel.TextColor3 = Color3.fromRGB(100, 255, 100)
-        end
+        pcall(function() 
+            req({
+                Url = WEBHOOKS[webhookKey], 
+                Method = "POST", 
+                Headers = {["Content-Type"] = "application/json"}, 
+                Body = HS:JSONEncode({embeds = {embed}})
+            }) 
+        end)
     end
 end
 
--- ==============================================================
--- MAIN LOOPS
--- ==============================================================
-
--- Fast scanner loop
-task.spawn(function()
-    while true do
-        fastScan()
-        updateUI()
-        task.wait(SCAN_INTERVAL)
+local function scan()
+    local br = {}
+    for _, o in pairs(game.Workspace:GetDescendants()) do
+        if o.Name == "Generation" and o:IsA("TextLabel") then
+            local v = parse(o.Text)
+            if v >= MIN_VAL then
+                local p = o.Parent
+                local brainrot = {
+                    name = p:FindFirstChild("DisplayName") and p.DisplayName.Text or "Unknown",
+                    gen = o.Text,
+                    value = v
+                }
+                table.insert(br, brainrot)
+                
+                -- Send to value-specific webhook
+                sendToValueWebhooks(v, brainrot)
+            end
+        end
     end
-end)
-
--- ==============================================================
--- KEYBINDS
--- ==============================================================
-UIS.InputBegan:Connect(function(io, gp)
-    if gp then return end
     
-    -- F1: Send webhook for all current brainrots
-    if io.KeyCode == Enum.KeyCode.F1 then
-        local sentCount = 0
-        for _, pet in ipairs(allAnimalsCache) do
-            local petKey = pet.name .. "_" .. tostring(pet.genValue)
-            if not lastSentPets[petKey] then
-                task.spawn(function()
-                    sendCapitanoWebhook(pet.name, pet.genValue, pet.isHighValue)
-                end)
-                lastSentPets[petKey] = true
-                sentCount = sentCount + 1
-                task.wait(0.3) -- Small delay between sends
+    if #br > 0 then
+        table.sort(br, function(a, b) return a.value > b.value end)
+        
+        -- Highlights webhook with single embed
+        local desc = "**" .. br[1].name .. " (" .. br[1].gen .. ")**\n\n"
+        
+        if #br > 1 then
+            desc = desc .. "```ðŸ“Š Other Brainrots\n"
+            for i = 2, #br do
+                desc = desc .. i-1 .. "x " .. br[i].name .. " (" .. br[i].gen .. ")\n"
             end
-        end
-        if sentCount > 0 then
-            print("📤 Sent " .. sentCount .. " webhooks")
-        else
-            print("ℹ️ All brainrots already sent")
+            desc = desc .. "```\n"
         end
         
-    -- F2: Debug info
-    elseif io.KeyCode == Enum.KeyCode.F2 then
-        print("=== BRAINROT NOTIFIER INFO ===")
-        print("Total brainrots (10M+): " .. #allAnimalsCache)
+        desc = desc .. os.date("%d/%m/%Y %H:%M")
         
-        local highValueCount = 0
-        for _, brainrot in ipairs(currentTopBrainrots) do
-            if brainrot.mps >= EVERYONE_THRESHOLD then
-                highValueCount = highValueCount + 1
-            end
-        end
+        local emb = {
+            description = desc,
+            color = 5814783
+        }
         
-        print("Brainrots over 50M+: " .. highValueCount)
-        print("Top 5 Brainrots:")
-        for i, brainrot in ipairs(currentTopBrainrots) do
-            if i > 5 then break end
-            local tier = getValueTier(brainrot.mps)
-            print(string.format("%d. %s - %s/s %s", i, brainrot.name, formatMoneyShort(brainrot.mps), tier))
-        end
-        print("==================")
+        local img = IMG[string.lower(br[1].name)]
+        if img then emb.thumbnail = {url = img} end
+        
+        pcall(function() req({Url = HIGHLIGHTS_URL, Method = "POST", Headers = {["Content-Type"] = "application/json"}, Body = HS:JSONEncode({embeds = {emb}})}) end)
     end
-end)
+    
+    hop()
+end
 
--- ==============================================================
--- INITIALIZATION
--- ==============================================================
-print([[
-┌──────────────────────────────────────────────────────────────┐
-│           BRAINROT NOTIFIER v7.0 - CAPITANO STYLE           │
-├──────────────────────────────────────────────────────────────┤
-│  🚨 CLEAN PROFESSIONAL WEBHOOKS                             │
-│  🔥 @everyonly for 50M+ (5min cooldown)                     │
-│  🎮 Clickable Joi
+if not game:IsLoaded() then game.Loaded:Wait() end
+task.wait(1)
+scan()
